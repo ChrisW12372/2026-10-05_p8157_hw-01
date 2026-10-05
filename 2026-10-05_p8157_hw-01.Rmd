@@ -11,3 +11,91 @@ output:
     css: style.css
 ---
 
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(plotly)
+
+load("data/Six Cities.RData")
+```
+
+
+# Question b
+
+## EDA for topeka
+
+```{r}
+df_topeka <- topeka |>
+  arrange(id, age)
+```
+
+
+```{r}
+df_topeka_summary <- df_topeka |>
+  group_by(id) |>
+  summarise(
+    n_visits = n(),
+    age_first = first(age),
+    age_last = last(age),
+    follow_up_time = age_last - age_first,
+    height_fitst = first(height),
+    log_fev1_first = first(log.FEV1),
+    .groups = "drop"
+  )
+
+write_csv(df_topeka_summary, "results/2026-10-05_topeka-summary.csv")
+```
+
+
+```{r}
+# check for NA
+colSums(is.na(df_topeka))
+
+# check for duplicated values within one age
+df_topeka |>
+  count(id, age, name = "n_records") |>
+  filter(n_records > 1)
+
+# non-positive follow-up time
+df_one_visit <- 
+  df_topeka_summary |>
+  filter(follow_up_time <= 0)
+
+write_csv(df_one_visit, "results/2026-10-05_topeka_subjects-one-visit.csv")
+
+# whether the first measurements of age and height match the initial values 
+df_baseline_check <- 
+  df_topeka |>
+  group_by(id) |>
+  summarise(
+    age_init_match = all(abs(first(age) - age.init) == 0),
+    height_init_match = all(abs(first(height) - height.init) == 0),
+    .groups = "drop"
+  )
+
+write_csv(df_baseline_check, "results/2026-10-05_topeka_baseline-match.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
