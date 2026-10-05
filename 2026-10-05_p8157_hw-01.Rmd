@@ -18,6 +18,7 @@ library(tidyverse)
 library(lme4)
 library(plotly)
 library(knitr)
+library(splines)
 
 load("data/Six Cities.RData")
 ```
@@ -176,7 +177,7 @@ Girls were first observed at different ages, from 6.43 to 14.07 years. I will us
 Initial age and height match the first recorded values for all girls. The lowest log(FEV1) is about −0.69. I will check this value against the girl’s age and height before deciding whether it is unusual.  
 
 
-### make some plots
+### mean structure
 
 #### age ~ log(FEV1)
 
@@ -243,6 +244,8 @@ fig2_topeka_points
 ```
 
 
+Log(FEV1) increases with height, and the relationship is roughly linear. I will include height in the mean model and compare a linear height effect with a more flexible form. Subject 197 also has unusually low lung function compared with girls of similar height.  
+
 #### age ~ height
 
 
@@ -265,7 +268,143 @@ fig3_topeka_age_height_spaghetti
 ```
 
 
-Age has a strong relationship with height, and therefore, the increase of log(FEV1) by age may have something to do with height.  
+Height increases with age and levels off in the teenage years. Since age and height are closely related, I will interpret their effects carefully when both are included in the model. The age effect after adjusting for height describes differences between girls of the same height, rather than the overall age-related growth pattern.  
+
+### dependence structure
+
+
+```{r}
+mean_fit <- lm(log.FEV1 ~ ns(age, df = 3) + ns(height, df = 3), data = df_topeka)
+
+df_topeka$residual_mean <- residuals(mean_fit)
+```
+
+
+```{r}
+fig4_topeka_residuals_spline <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = residual_mean)) +
+    geom_line(
+      aes(group = id),
+      color = "#559E9E",
+      alpha = 0.25,
+      linewidth = 0.4
+    ) +
+    geom_point(alpha = 0.25, size = 0.8) +
+    geom_smooth(
+      method = "loess",
+      formula = y ~ x,
+      se = FALSE,
+      color = "#0072B2"
+    ) +
+    labs(
+      title = "Residual lung function trajectories",
+      x = "Age (years)",
+      y = "Residual log(FEV1)"
+    ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig04_topeka_residual-plot_splines.png",
+       fig4_topeka_residuals_spline, height = 6, width = 9, dpi = 900)
+
+fig4_topeka_residuals_spline
+```
+
+
+The residual smooth is close to zero, with no clear remaining age trend. Some girls have residuals that stay above or below zero across visits, suggesting persistent differences between girls. I will consider a random intercept to capture these differences and use the variogram to explore whether correlation also changes with the time gap.  
+
+```{r}
+pair_data <- bind_rows(
+  lapply(split(df_topeka, df_topeka$id), function(d) {
+
+    d <- d %>%
+      filter(is.finite(age), is.finite(residual_mean)) |>
+      arrange(age)
+
+    if (nrow(d) < 2) return(NULL)
+
+    index <- combn(seq_len(nrow(d)), 2)
+    j <- index[1, ]
+    k <- index[2, ]
+
+    tibble(
+      id = d$id[1],
+      time_gap = abs(d$age[j] - d$age[k]),
+      semivariance = (d$residual_mean[j] - d$residual_mean[k])^2 / 2
+    )
+  })
+)
+```
+
+
+```{r}
+variogram_summary <- pair_data |>
+  mutate(gap_group = floor(time_gap + 0.5)) |>
+  group_by(gap_group) |>
+  summarise(
+    mean_gap = mean(time_gap),
+    semivariance = mean(semivariance),
+    n_pairs = n(),
+    n_subjects = n_distinct(id),
+    .groups = "drop"
+  )
+
+variogram_summary
+```
+
+
+```{r}
+fig5_topeka_residual_variogram <- 
+  variogram_summary |>
+  ggplot(aes(x = mean_gap, y = semivariance)) +
+  geom_line(color = "#0072B2", linewidth = 0.7) +
+  geom_point(aes(size = n_pairs), color = "#0072B2") +
+  scale_x_continuous(
+    breaks = seq(0, ceiling(max(pair_data$time_gap)), by = 1)
+  ) +
+  labs(
+    title = "Residual variogram",
+    x = "Time gap (years)",
+    y = "Mean semivariance",
+    size = "Number of pairs"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig05_topeka_residual-variogram.png",
+       fig5_topeka_residual_variogram, height = 6, width = 9, dpi = 1200)
+
+fig5_topeka_residual_variogram
+```
+
+
+The residual variogram generally increases with the time gap, suggesting that measurements closer in time are more strongly correlated. I will therefore explore a correlation structure that depends on the time gap. The estimates at long gaps are based on fewer pairs and should be interpreted cautiously.  
+
+```{r}
+fig6_topeka_boxplot_residual_age <- 
+  df_topeka |>
+  mutate(age_group = floor(age)) |>
+  ggplot(aes(x = factor(age_group), y = residual_mean)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_boxplot(outlier.alpha = 0.4) +
+  labs(
+    title = "Residual spread by age",
+    x = "Age group (years)",
+    y = "Residual log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig06_topeka_residual-age_boxplot.png",
+       fig6_topeka_boxplot_residual_age, height = 6, width = 9, dpi = 1200)
+
+fig6_topeka_boxplot_residual_age
+```
+
+The residual spread is similar across age groups, with no clear trend in variability. I will therefore start with a constant-variance model and check this assumption after fitting the model.  
+
+Subject 197 has a clearly low value and only one measurement, so I cannot compare it with her other visits.  
+
+
+
+
+
+
 
 
 
