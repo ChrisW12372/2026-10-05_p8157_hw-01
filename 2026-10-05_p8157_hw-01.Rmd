@@ -11,6 +11,7 @@ output:
     css: style.css
 ---
 
+The full homework can be found here: https://github.com/ChrisW12372/2026-10-05_p8157_hw-01.git
 
 ```{r message=FALSE, warning=FALSE}
 library(tidyverse)
@@ -175,16 +176,96 @@ Girls were first observed at different ages, from 6.43 to 14.07 years. I will us
 Initial age and height match the first recorded values for all girls. The lowest log(FEV1) is about −0.69. I will check this value against the girl’s age and height before deciding whether it is unusual.  
 
 
+### make some plots
+
+#### age ~ log(FEV1)
+
+```{r}
+fig1_topeka_spaghetti <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = log.FEV1)) +
+  geom_line(aes(group = id), color = "#32BFAD", alpha = 0.25, linewidth = 0.4) +
+  geom_point(color = "#3810A3", alpha = 0.25, size = 0.75) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "#0072B2") +
+  labs(
+    title = "Lung function trajectories",
+    x = "Age (years)",
+    y = "Log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig01_topeka_spaghetti-plot.png", fig1_topeka_spaghetti,
+       height = 6, width = 9, dpi = 1000)
+
+fig1_topeka_spaghetti
+```
 
 
+```{r}
+# find out the outlier
+outlier_topeka <- df_topeka |>
+  slice_min(log.FEV1, n = 1, with_ties = TRUE)
+
+outlier_topeka
+```
+
+```{r}
+# checking all measurements of id 197
+df_topeka |>
+  filter(id == 197) |>
+  arrange(id, age)
+```
 
 
+Log(FEV1) generally increases with age and levels off around ages 15–16. I will therefore consider a nonlinear age effect in later models. Lung function also differs across girls, so I will explore within-person correlation.  
+
+Subject 197 has a clearly low value and only one measurement, so I cannot compare it with her other visits. I will retain this observation for now, and later decide whether to include it into the analysis.  
+
+#### height ~ log(FEV1)
+
+```{r}
+fig2_topeka_points <- 
+  df_topeka |>
+  ggplot(aes(x = height, y = log.FEV1)) +
+  geom_point(color = "#DB662C", alpha = 0.35, size = 0.75) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, colour = "#8A2278") +
+  geom_point(data = outlier_topeka, colour = "#5a6acd") +
+  geom_text(data = outlier_topeka, colour = "#E6DD39", aes(label = paste0("ID", id)), vjust = -1) +
+  labs(
+    title = "Lung function and height",
+    x = "Height",
+    y = "Log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig02_topeka_point-plot.png", fig2_topeka_points,
+       height = 6, width = 9, dpi = 1200)
+
+fig2_topeka_points
+```
 
 
+#### age ~ height
 
 
+```{r}
+fig3_topeka_age_height_spaghetti <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = height)) +
+  geom_line(aes(group = id), color = "#7FBA38", alpha = 0.25, linewidth = 0.4) +
+  geom_point(color = "#6EAFDB", alpha = 0.35) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "#894CC7") +
+  labs(
+    title = "Height trajectories",
+    x = "Age (years)",
+    y = "Height"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig03_topeka_age-height-spaghetti.png", fig3_topeka_age_height_spaghetti, height = 6, width = 9, dpi = 1000)
+
+fig3_topeka_age_height_spaghetti
+```
 
 
+Age has a strong relationship with height, and therefore, the increase of log(FEV1) by age may have something to do with height.  
 
 
 
