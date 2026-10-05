@@ -16,6 +16,7 @@ output:
 library(tidyverse)
 library(lme4)
 library(plotly)
+library(knitr)
 
 load("data/Six Cities.RData")
 ```
@@ -25,9 +26,17 @@ load("data/Six Cities.RData")
 
 ## EDA for topeka
 
+### overall checking
+
 ```{r}
 df_topeka <- topeka |>
-  arrange(id, age)
+  arrange(id, age) |>
+  mutate(
+    height = as.numeric(height),
+    age = as.numeric(age),
+    height.init = as.numeric(height.init),
+    age.init = as.numeric(age.init)
+  )
 ```
 
 
@@ -79,8 +88,91 @@ write_csv(df_baseline_check, "results/2026-10-05_topeka_baseline-match.csv")
 
 
 
+```{r}
+describe_row <- function(label, x) {
+  x <- x[!is.na(x)]
+
+  tibble(
+    Characteristic = label,
+    N = length(x),
+    `Mean (SD)` = sprintf(
+      "%.2f (%.2f)", mean(x), sd(x)
+    ),
+    `Median [Q1, Q3]` = sprintf(
+      "%.2f [%.2f, %.2f]",
+      median(x),
+      quantile(x, 0.25),
+      quantile(x, 0.75)
+    ),
+    `Min–Max` = sprintf(
+      "%.2f–%.2f", min(x), max(x)
+    )
+  )
+}
+```
 
 
+```{r}
+overview_table <- bind_rows(
+  describe_row(
+    "Measurements per girl",
+    df_topeka_summary$n_visits
+  ),
+  describe_row(
+    "Age at first observation (years)",
+    df_topeka_summary$age_first
+  ),
+  describe_row(
+    "Age at last observation (years)",
+    df_topeka_summary$age_last
+  ),
+  describe_row(
+    "Observed follow-up span (years)",
+    df_topeka_summary$follow_up_time
+  ),
+  describe_row(
+    "Height at first observation",
+    df_topeka_summary$height_fitst
+  ),
+  describe_row(
+    "Log(FEV1) at first observation",
+    df_topeka_summary$log_fev1_first
+  ),
+  describe_row(
+    "Age across all observations (years)",
+    df_topeka$age
+  ),
+  describe_row(
+    "Height across all observations",
+    df_topeka$height
+  ),
+  describe_row(
+    "Log(FEV1) across all observations",
+    df_topeka$log.FEV1
+  )
+)
+
+kable(
+  overview_table,
+  caption = "Table 1. Data and follow-up characteristics of the Topeka sample",
+  col.names = c(
+    "Characteristic",
+    "N",
+    "Mean (SD)",
+    "Median [Q1, Q3]",
+    "Min–Max"
+  ),
+  align = c("l", "r", "r", "r", "r"),
+  row.names = FALSE
+)
+```
+
+
+The data include 1,994 measurements from 300 girls. Each girl has 1–12 measurements, and 48 girls (16%) have only one. I will keep all girls in the analysis and use a model that can handle different numbers of measurements. Girls with only one measurement can help estimate average lung function, but cannot show how it changes within a person.  
+
+Girls were first observed at different ages, from 6.43 to 14.07 years. I will use actual age rather than visit number to study lung growth. I will also check how many observations are available at each age and whether girls with shorter follow-up differ from those with longer follow-up.  
+
+Initial age and height match the first recorded values for all girls. The lowest log(FEV1) is about −0.69. I will check this value against the girl’s age and height before deciding whether it is unusual.  
 
 
 
