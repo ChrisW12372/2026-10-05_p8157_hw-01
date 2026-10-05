@@ -1,0 +1,13 @@
+---
+title: "2026-10-05_p8157_hw-01"
+author: "Chris"
+date: "2026-10-05"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: TRUE
+    theme: cosmo
+    css: style.css
+---
+
