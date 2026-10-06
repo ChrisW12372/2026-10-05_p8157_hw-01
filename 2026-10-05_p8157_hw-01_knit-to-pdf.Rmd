@@ -1,0 +1,803 @@
+---
+title: "2026-10-05_p8157_hw-01"
+author: "Chris"
+date: "2026-10-05"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+---
+
+**Acknowledgement**: The author would like to acknowledge the use of ChatGPT, a language model developed by OpenAI, in the preparation of this assignment. ChatGPT was used in the following ways in this assignment:   
+* Helping me organize the codes for generating Table One.  
+* Providing a detailed mind map for EDA.  
+* Suggesting me add more security checks.  
+* Helping to make the plots more human-friendly.  
+
+
+The full homework can be found here: https://github.com/ChrisW12372/2026-10-05_p8157_hw-01.git
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lme4)
+library(plotly)
+library(knitr)
+library(splines)
+library(broom)
+
+load("data/Six Cities.RData")
+load("data/MACS.RData")
+```
+
+
+# Question 2
+
+## EDA for topeka
+
+### overall checking
+
+```{r}
+df_topeka <- topeka |>
+  arrange(id, age) |>
+  mutate(
+    height = as.numeric(height),
+    age = as.numeric(age),
+    height.init = as.numeric(height.init),
+    age.init = as.numeric(age.init)
+  )
+```
+
+
+```{r}
+df_topeka_summary <- df_topeka |>
+  group_by(id) |>
+  summarise(
+    n_visits = n(),
+    age_first = first(age),
+    age_last = last(age),
+    follow_up_time = age_last - age_first,
+    height_fitst = first(height),
+    log_fev1_first = first(log.FEV1),
+    .groups = "drop"
+  )
+
+write_csv(df_topeka_summary, "results/2026-10-05_topeka-summary.csv")
+```
+
+
+```{r}
+# check for NA
+colSums(is.na(df_topeka))
+
+# check for duplicated values within one age
+df_topeka |>
+  count(id, age, name = "n_records") |>
+  filter(n_records > 1)
+
+# non-positive follow-up time
+df_one_visit <- 
+  df_topeka_summary |>
+  filter(follow_up_time <= 0)
+
+write_csv(df_one_visit, "results/2026-10-05_topeka_subjects-one-visit.csv")
+
+# whether the first measurements of age and height match the initial values 
+df_baseline_check <- 
+  df_topeka |>
+  group_by(id) |>
+  summarise(
+    age_init_match = all(abs(first(age) - age.init) == 0),
+    height_init_match = all(abs(first(height) - height.init) == 0),
+    .groups = "drop"
+  )
+
+write_csv(df_baseline_check, "results/2026-10-05_topeka_baseline-match.csv")
+```
+
+
+
+```{r}
+describe_row <- function(label, x) {
+  x <- x[!is.na(x)]
+
+  tibble(
+    Characteristic = label,
+    N = length(x),
+    `Mean (SD)` = sprintf(
+      "%.2f (%.2f)", mean(x), sd(x)
+    ),
+    `Median [Q1, Q3]` = sprintf(
+      "%.2f [%.2f, %.2f]",
+      median(x),
+      quantile(x, 0.25),
+      quantile(x, 0.75)
+    ),
+    `Min–Max` = sprintf(
+      "%.2f–%.2f", min(x), max(x)
+    )
+  )
+}
+```
+
+
+```{r}
+overview_table <- bind_rows(
+  describe_row(
+    "Measurements per girl",
+    df_topeka_summary$n_visits
+  ),
+  describe_row(
+    "Age at first observation (years)",
+    df_topeka_summary$age_first
+  ),
+  describe_row(
+    "Age at last observation (years)",
+    df_topeka_summary$age_last
+  ),
+  describe_row(
+    "Observed follow-up span (years)",
+    df_topeka_summary$follow_up_time
+  ),
+  describe_row(
+    "Height at first observation",
+    df_topeka_summary$height_fitst
+  ),
+  describe_row(
+    "Log(FEV1) at first observation",
+    df_topeka_summary$log_fev1_first
+  ),
+  describe_row(
+    "Age across all observations (years)",
+    df_topeka$age
+  ),
+  describe_row(
+    "Height across all observations",
+    df_topeka$height
+  ),
+  describe_row(
+    "Log(FEV1) across all observations",
+    df_topeka$log.FEV1
+  )
+)
+
+kable(
+  overview_table,
+  caption = "Table 1. Data and follow-up characteristics of the Topeka sample",
+  col.names = c(
+    "Characteristic",
+    "N",
+    "Mean (SD)",
+    "Median [Q1, Q3]",
+    "Min–Max"
+  ),
+  align = c("l", "r", "r", "r", "r"),
+  row.names = FALSE
+)
+```
+
+
+The data include 1,994 measurements from 300 girls. Each girl has 1–12 measurements, and 48 girls (16%) have only one. I will keep all girls in the analysis and use a model that can handle different numbers of measurements. Girls with only one measurement can help estimate average lung function, but cannot show how it changes within a person.  
+
+Girls were first observed at different ages, from 6.43 to 14.07 years. I will use actual age rather than visit number to study lung growth. I will also check how many observations are available at each age and whether girls with shorter follow-up differ from those with longer follow-up.  
+
+Initial age and height match the first recorded values for all girls. The lowest log(FEV1) is about −0.69. I will check this value against the girl’s age and height before deciding whether it is unusual.  
+
+
+### mean structure
+
+#### age ~ log(FEV1)
+
+```{r}
+fig1_topeka_spaghetti <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = log.FEV1)) +
+  geom_line(aes(group = id), color = "#32BFAD", alpha = 0.25, linewidth = 0.4) +
+  geom_point(color = "#3810A3", alpha = 0.25, size = 0.75) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "#0072B2") +
+  labs(
+    title = "Lung function trajectories",
+    x = "Age (years)",
+    y = "Log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig01_topeka_spaghetti-plot.png", fig1_topeka_spaghetti,
+       height = 6, width = 9, dpi = 1000)
+
+fig1_topeka_spaghetti
+```
+
+
+```{r}
+# find out the outlier
+outlier_topeka <- df_topeka |>
+  slice_min(log.FEV1, n = 1, with_ties = TRUE)
+
+outlier_topeka
+```
+
+```{r}
+# checking all measurements of id 197
+df_topeka |>
+  filter(id == 197) |>
+  arrange(id, age)
+```
+
+
+Log(FEV1) generally increases with age and levels off around ages 15–16. I will therefore consider a nonlinear age effect in later models. Lung function also differs across girls, so I will explore within-person correlation.  
+
+Subject 197 has a clearly low value and only one measurement, so I cannot compare it with her other visits. I will retain this observation for now, and later decide whether to include it into the analysis.  
+
+#### height ~ log(FEV1)
+
+```{r}
+fig2_topeka_points <- 
+  df_topeka |>
+  ggplot(aes(x = height, y = log.FEV1)) +
+  geom_point(color = "#DB662C", alpha = 0.35, size = 0.75) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, colour = "#8A2278") +
+  geom_point(data = outlier_topeka, colour = "#5a6acd") +
+  geom_text(data = outlier_topeka, colour = "#E6DD39", aes(label = paste0("ID", id)), vjust = -1) +
+  labs(
+    title = "Lung function and height",
+    x = "Height",
+    y = "Log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig02_topeka_point-plot.png", fig2_topeka_points,
+       height = 6, width = 9, dpi = 1200)
+
+fig2_topeka_points
+```
+
+
+Log(FEV1) increases with height, and the relationship is roughly linear. I will include height in the mean model and compare a linear height effect with a more flexible form. Subject 197 also has unusually low lung function compared with girls of similar height.  
+
+#### age ~ height
+
+
+```{r}
+fig3_topeka_age_height_spaghetti <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = height)) +
+  geom_line(aes(group = id), color = "#7FBA38", alpha = 0.25, linewidth = 0.4) +
+  geom_point(color = "#6EAFDB", alpha = 0.35) +
+  geom_smooth(method = "loess", formula = y ~ x, se = FALSE, color = "#894CC7") +
+  labs(
+    title = "Height trajectories",
+    x = "Age (years)",
+    y = "Height"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig03_topeka_age-height-spaghetti.png", fig3_topeka_age_height_spaghetti, height = 6, width = 9, dpi = 1000)
+
+fig3_topeka_age_height_spaghetti
+```
+
+
+Height increases with age and levels off in the teenage years. Since age and height are closely related, I will interpret their effects carefully when both are included in the model. The age effect after adjusting for height describes differences between girls of the same height, rather than the overall age-related growth pattern.  
+
+### dependence structure
+
+
+```{r}
+mean_fit <- lm(log.FEV1 ~ ns(age, df = 3) + ns(height, df = 3), data = df_topeka)
+
+df_topeka$residual_mean <- residuals(mean_fit)
+```
+
+
+```{r}
+fig4_topeka_residuals_spline <- 
+  df_topeka |>
+  ggplot(aes(x = age, y = residual_mean)) +
+    geom_line(
+      aes(group = id),
+      color = "#559E9E",
+      alpha = 0.25,
+      linewidth = 0.4
+    ) +
+    geom_point(alpha = 0.25, size = 0.8) +
+    geom_smooth(
+      method = "loess",
+      formula = y ~ x,
+      se = FALSE,
+      color = "#0072B2"
+    ) +
+    labs(
+      title = "Residual lung function trajectories",
+      x = "Age (years)",
+      y = "Residual log(FEV1)"
+    ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig04_topeka_residual-plot_splines.png",
+       fig4_topeka_residuals_spline, height = 6, width = 9, dpi = 900)
+
+fig4_topeka_residuals_spline
+```
+
+
+The residual smooth is close to zero, with no clear remaining age trend. Some girls have residuals that stay above or below zero across visits, suggesting persistent differences between girls. I will consider a random intercept to capture these differences and use the variogram to explore whether correlation also changes with the time gap.  
+
+```{r}
+pair_data <- bind_rows(
+  lapply(split(df_topeka, df_topeka$id), function(d) {
+
+    d <- d %>%
+      filter(is.finite(age), is.finite(residual_mean)) |>
+      arrange(age)
+
+    if (nrow(d) < 2) return(NULL)
+
+    index <- combn(seq_len(nrow(d)), 2)
+    j <- index[1, ]
+    k <- index[2, ]
+
+    tibble(
+      id = d$id[1],
+      time_gap = abs(d$age[j] - d$age[k]),
+      semivariance = (d$residual_mean[j] - d$residual_mean[k])^2 / 2
+    )
+  })
+)
+```
+
+
+```{r}
+variogram_summary <- pair_data |>
+  mutate(gap_group = floor(time_gap + 0.5)) |>
+  group_by(gap_group) |>
+  summarise(
+    mean_gap = mean(time_gap),
+    semivariance = mean(semivariance),
+    n_pairs = n(),
+    n_subjects = n_distinct(id),
+    .groups = "drop"
+  )
+
+variogram_summary
+```
+
+
+```{r}
+fig5_topeka_residual_variogram <- 
+  variogram_summary |>
+  ggplot(aes(x = mean_gap, y = semivariance)) +
+  geom_line(color = "#0072B2", linewidth = 0.7) +
+  geom_point(aes(size = n_pairs), color = "#0072B2") +
+  scale_x_continuous(
+    breaks = seq(0, ceiling(max(pair_data$time_gap)), by = 1)
+  ) +
+  labs(
+    title = "Residual variogram",
+    x = "Time gap (years)",
+    y = "Mean semivariance",
+    size = "Number of pairs"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig05_topeka_residual-variogram.png",
+       fig5_topeka_residual_variogram, height = 6, width = 9, dpi = 1200)
+
+fig5_topeka_residual_variogram
+```
+
+
+The residual variogram generally increases with the time gap, suggesting that measurements closer in time are more strongly correlated. I will therefore explore a correlation structure that depends on the time gap. The estimates at long gaps are based on fewer pairs and should be interpreted cautiously.  
+
+```{r}
+fig6_topeka_boxplot_residual_age <- 
+  df_topeka |>
+  mutate(age_group = floor(age)) |>
+  ggplot(aes(x = factor(age_group), y = residual_mean)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_boxplot(outlier.alpha = 0.4) +
+  labs(
+    title = "Residual spread by age",
+    x = "Age group (years)",
+    y = "Residual log(FEV1)"
+  ) + theme_minimal()
+
+ggsave("plots/2026-10-05_fig06_topeka_residual-age_boxplot.png",
+       fig6_topeka_boxplot_residual_age, height = 6, width = 9, dpi = 1200)
+
+fig6_topeka_boxplot_residual_age
+```
+
+The residual spread is similar across age groups, with no clear trend in variability. I will therefore start with a constant-variance model and check this assumption after fitting the model.  
+
+Subject 197 has a clearly low value and only one measurement, so I cannot compare it with her other visits.  
+
+
+## questions proposed
+
+**Overall trends:** How does lung function change with age on average? Does growth slow down during the teenage years? Within girls, is an increase in height associated with an increase in lung function?   
+
+**Individual differences:** Do girls differ in their lung function levels and rates of growth? How strongly are repeated measurements from the same girl correlated, and does this correlation decrease as the time gap increases?   
+
+
+## single time measurement
+
+**Overall trends:** With one measurement per girl, we could examine how average lung function differs across ages. However, differences between younger and older girls can't describe how the same person changes by time. The interpretation required girls of different ages to be comparable in other factors affecting lung function (exchangeable). Also, baseline ages range from about 6.43 to 14 years, so these data would not directly show whether growth slows after 15.  
+
+We could also examine if taller girls have higher lung function. However, this would describe a between-subject association, rather than whether a girl’s lung function increases as she grows taller.   
+
+**Individual differences:** We could study differences in lung function levels between girls of similar age and height. However, one measurement per girl would not allow us to distinguish persistent individual differences from temporary variation or measurement error. We weren't able to directly estimate individual growth rates, within-girl correlation, or how that correlation changed by time.  
+
+
+# Question 3
+
+## table one
+
+
+```{r}
+df_eligible_ids <- macs |>
+  group_by(id) |>
+  summarise(
+    has_pre = any(time >= -0.5 & time < 0),
+    has_post = any(time > 0),
+    .groups = "drop"
+  ) |>
+  filter(has_pre & has_post)
+
+nrow(df_eligible_ids)  
+```
+
+
+```{r}
+df_macs_baseline <- macs |>
+  semi_join(df_eligible_ids, by = "id") |>
+  filter(time >= -0.5 & time < 0) |>
+  arrange(id)
+
+nrow(df_macs_baseline)             # 266
+n_distinct(df_macs_baseline$id)    # 266
+```
+
+
+```{r}
+continuous_row <- function(label, x) {
+  missing_n <- sum(is.na(x))
+  x <- x[!is.na(x)]
+
+  tibble(
+    Characteristic = label,
+    `Mean (SD) or n (%)` =
+      sprintf("%.2f (%.2f)", mean(x), sd(x)),
+    `Median [Q1, Q3]` =
+      sprintf(
+        "%.2f [%.2f, %.2f]",
+        median(x),
+        quantile(x, 0.25),
+        quantile(x, 0.75)
+      ),
+    Missing = as.character(missing_n)
+  )
+}
+```
+
+
+```{r}
+categorical_rows <- function(label, x) {
+  missing_n <- sum(is.na(x))
+  observed <- x[!is.na(x)]
+  counts <- table(observed)
+
+  bind_rows(
+    tibble(
+      Characteristic = label,
+      `Mean (SD) or n (%)` = "",
+      `Median [Q1, Q3]` = "",
+      Missing = as.character(missing_n)
+    ),
+    tibble(
+      Characteristic = paste0("  Code ", names(counts)),
+      `Mean (SD) or n (%)` = sprintf(
+        "%d (%.1f%%)",
+        as.integer(counts),
+        100 * as.integer(counts) / length(observed)
+      ),
+      `Median [Q1, Q3]` = "",
+      Missing = ""
+    )
+  )
+}
+```
+
+
+```{r}
+table_one <- bind_rows(
+  continuous_row("age (original scale)", df_macs_baseline$age),
+  categorical_rows("packs (original codes)", df_macs_baseline$packs),
+  categorical_rows("drug (original codes)", df_macs_baseline$drug),
+  continuous_row("partners (original scale)", df_macs_baseline$partners),
+  continuous_row("CESD score", df_macs_baseline$cesd),
+  continuous_row("Baseline CD4+ count", df_macs_baseline$cd4)
+)
+
+
+kable(
+  table_one,
+  caption = "Table 1. Baseline characteristics of the MACS sample (N = 266)",
+  align = c("l", "r", "r", "r"),
+  row.names = FALSE
+)
+```
+
+
+Baseline was defined as the pre-seroconversion measurement within six months of seroconversion. Percentages use non-missing observations as the denominator. Variables with unconfirmed definitions are presented on their original scales or using their original codes.  
+
+
+## two-stage least squares analysis
+
+### stage one
+
+```{r}
+baseline_records <- df_macs_baseline |>
+  mutate(
+    time_original = time,
+    time = 0
+  )
+
+post_records <- macs |>
+  semi_join(df_eligible_ids, by = "id") |>
+  filter(time > 0) |>
+  mutate(time_original = time)
+
+
+df_macs_analysis <- bind_rows(
+  baseline_records,
+  post_records
+) |>
+  arrange(id, time)
+```
+
+
+```{r}
+stage1_models <- df_macs_analysis |>
+  group_by(id) |>
+  nest() |>
+  ungroup() |>
+  mutate(
+    model = map(data, ~ lm(cd4 ~ time, data = .x))
+  )
+```
+
+
+```{r}
+stage1_results <- stage1_models |>
+  transmute(
+    id,
+    n_measurements = map_int(model, nobs),
+    followup_years = map_dbl(data, ~ max(.x$time)),
+    intercept = map_dbl(model, ~ unname(coef(.x)[1])),
+    slope = map_dbl(model, ~ unname(coef(.x)[2])),
+    slope_se = map_dbl(
+      model,
+      function(m) {
+        if (df.residual(m) <= 0) return(NA_real_)
+        unname(sqrt(diag(vcov(m)))["time"])
+      }
+    )
+  )
+
+head(stage1_results)
+
+```
+
+
+```{r}
+stage1_lines <- stage1_models |>
+  transmute(
+    id,
+    fitted_data = map2(
+      data, model,
+      function(d, m) {
+        new_data <- tibble(
+          time = seq(0, max(d$time), length.out = 50)
+        )
+        new_data |>
+          mutate(cd4_fitted = as.numeric(predict(m, new_data)))
+      }
+    )
+  ) |>
+  unnest(fitted_data)
+```
+
+
+```{r}
+fig7_cd4_linear_by_subject <- 
+  ggplot() +
+  geom_line(
+    data = df_macs_analysis,
+    aes(time, cd4, group = id),
+    color = "grey60", alpha = 0.15
+  ) +
+  geom_line(
+    data = stage1_lines,
+    aes(time, cd4_fitted, group = id),
+    color = "#0072B2", alpha = 0.25
+  ) +
+  labs(
+    title = "Individual linear fits for CD4+ count",
+    x = "Time since seroconversion (years; baseline treated as 0)",
+    y = "CD4+ count"
+  ) +
+  theme_minimal()
+
+ggsave("plots/2026-10-06_fig07_cd4_linear-by-subject.png", 
+       fig7_cd4_linear_by_subject, height = 6, width = 9, dpi = 900)
+
+fig7_cd4_linear_by_subject
+```
+
+
+### stage two
+
+```{r}
+stage1_results |>
+  summarise(
+    n_subjects = n(),
+    mean_slope = mean(slope),
+    median_slope = median(slope),
+    q1_slope = quantile(slope, 0.25),
+    q3_slope = quantile(slope, 0.75),
+    percent_negative = 100 * mean(slope < 0),
+    n_two_measurements = sum(n_measurements == 2)
+  )
+```
+
+
+```{r}
+stage2_data <- stage1_results |>
+  left_join(
+    df_macs_baseline |>
+      select(id, age, packs, drug, partners, cesd),
+    by = "id"
+  ) |>
+  mutate(
+    packs = factor(packs),
+    drug = factor(drug)
+  )
+
+stage2_intercept <- lm(
+  intercept ~ age + packs + drug + partners + cesd,
+  data = stage2_data
+)
+
+stage2_slope <- lm(
+  slope ~ age + packs + drug + partners + cesd,
+  data = stage2_data
+)
+
+summary(stage2_intercept)
+summary(stage2_slope)
+```
+
+
+```{r}
+stage1_results |>
+  arrange(slope) |>
+  select(id, n_measurements, followup_years, slope, slope_se) |>
+  slice_head(n = 10)
+```
+
+
+```{r}
+stage2_data |>
+  mutate(cooks_distance = cooks.distance(stage2_slope)) |>
+  arrange(desc(cooks_distance)) |>
+  select(id, n_measurements, followup_years,
+         slope, cooks_distance) |>
+  slice_head(n = 10)
+```
+
+
+```{r}
+stage2_data_3plus <- stage2_data |>
+  filter(n_measurements >= 3)
+
+stage2_intercept_3plus <- lm(
+  intercept ~ age + packs + drug + partners + cesd,
+  data = stage2_data_3plus
+)
+
+stage2_slope_3plus <- lm(
+  slope ~ age + packs + drug + partners + cesd,
+  data = stage2_data_3plus
+)
+
+summary(stage2_intercept_3plus)
+summary(stage2_slope_3plus)
+```
+
+
+
+```{r}
+stage2_table <- bind_rows(
+  tidy(stage2_intercept, conf.int = TRUE) |>
+    mutate(Model = "Starting CD4 level"),
+  tidy(stage2_slope, conf.int = TRUE) |>
+    mutate(Model = "Annual CD4 change")
+) |>
+  select(
+    Model,
+    Predictor = term,
+    Estimate = estimate,
+    `Lower 95% CI` = conf.low,
+    `Upper 95% CI` = conf.high,
+    `p-value` = p.value
+  )
+
+kable(
+  stage2_table,
+  digits = 3,
+  caption = "Stage-two regression results"
+)
+```
+
+
+```{r}
+check_ids <- stage2_data |>
+  mutate(cooks_distance = cooks.distance(stage2_slope)) |>
+  arrange(desc(cooks_distance)) |>
+  slice_head(n = 5) |>
+  pull(id)
+
+df_macs_analysis |>
+  filter(id %in% check_ids) |>
+  arrange(id, time_original) |>
+  select(id, time_original, time, cd4)
+```
+
+
+```{r}
+comparison_table <- bind_rows(
+  tidy(stage2_intercept, conf.int = TRUE) |>
+    mutate(Analysis = "All participants",
+           Outcome = "Starting CD4 level"),
+
+  tidy(stage2_intercept_3plus, conf.int = TRUE) |>
+    mutate(Analysis = "At least 3 measurements",
+           Outcome = "Starting CD4 level"),
+
+  tidy(stage2_slope, conf.int = TRUE) |>
+    mutate(Analysis = "All participants",
+           Outcome = "Annual CD4 change"),
+
+  tidy(stage2_slope_3plus, conf.int = TRUE) |>
+    mutate(Analysis = "At least 3 measurements",
+           Outcome = "Annual CD4 change")
+) |>
+  filter(term != "(Intercept)") |>
+  mutate(
+    `Estimate (95% CI)` = sprintf(
+      "%.2f (%.2f, %.2f)", estimate, conf.low, conf.high
+    ),
+    `p-value` = trimws(
+      format.pval(p.value, digits = 3, eps = 0.001)
+    )
+  ) |>
+  select(
+    Outcome, Predictor = term, Analysis,
+    `Estimate (95% CI)`, `p-value`
+  ) |>
+  arrange(Outcome, Predictor, Analysis)
+
+kable(
+  comparison_table,
+  caption = "Main and sensitivity analyses"
+)
+```
+
+I fitted a separate linear regression of CD4 count on time for each of the 266 participants, then modeled the estimated starting CD4 levels and annual changes using baseline covariates.  
+
+Most participants showed declining CD4 counts: 92.5% had negative slopes. The median slope was −141.7 per year, with an interquartile range of −283.7 to −67.5. The mean was more negative (−293.4), reflecting several extreme slopes.  
+
+After adjustment for the other covariates, packs codes 3 and 4 were associated with higher estimated starting CD4 levels than code 0. Drug code 1 was also associated with a higher starting level. None of the baseline covariates showed a clear association with annual CD4 change in the main analysis.  
+
+The most influential participants in the slope model had only two measurements. I repeated the analysis among the 231 participants with at least three measurements. The starting-level associations for packs codes 3 and 4 remained, while the evidence for drug code 1 weakened. In this sensitivity analysis, packs code 3 was associated with faster decline, and higher CESD scores were associated with more positive slopes.  
+
+These differences suggest that conclusions about CD4 change depend on participants with limited measurements. Also, assigning the pre-seroconversion measurement to time zero shortened the modeled measurement interval and may have exaggerated some short-term slopes.  
+
+
+
+
