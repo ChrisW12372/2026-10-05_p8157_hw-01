@@ -11,6 +11,13 @@ output:
     css: style.css
 ---
 
+**Acknowledgement**: The author would like to acknowledge the use of ChatGPT, a language model developed by OpenAI, in the preparation of this assignment. ChatGPT was used in the following ways in this assignment:   
+* Helping me organize the codes for generating Table One.  
+* Providing a detailed mind map for EDA.  
+* Suggesting me add more security checks.  
+* Helping to make the plots more human-friendly.  
+
+
 The full homework can be found here: https://github.com/ChrisW12372/2026-10-05_p8157_hw-01.git
 
 ```{r message=FALSE, warning=FALSE}
@@ -19,6 +26,7 @@ library(lme4)
 library(plotly)
 library(knitr)
 library(splines)
+library(broom)
 
 load("data/Six Cities.RData")
 load("data/MACS.RData")
@@ -521,25 +529,277 @@ kable(
 Baseline was defined as the pre-seroconversion measurement within six months of seroconversion. Percentages use non-missing observations as the denominator. Variables with unconfirmed definitions are presented on their original scales or using their original codes.  
 
 
+## two-stage least squares analysis
+
+### stage one
+
+```{r}
+baseline_records <- df_macs_baseline |>
+  mutate(
+    time_original = time,
+    time = 0
+  )
+
+post_records <- macs |>
+  semi_join(df_eligible_ids, by = "id") |>
+  filter(time > 0) |>
+  mutate(time_original = time)
+
+
+df_macs_analysis <- bind_rows(
+  baseline_records,
+  post_records
+) |>
+  arrange(id, time)
+```
+
+
+```{r}
+stage1_models <- df_macs_analysis |>
+  group_by(id) |>
+  nest() |>
+  ungroup() |>
+  mutate(
+    model = map(data, ~ lm(cd4 ~ time, data = .x))
+  )
+```
+
+
+```{r}
+stage1_results <- stage1_models |>
+  transmute(
+    id,
+    n_measurements = map_int(model, nobs),
+    followup_years = map_dbl(data, ~ max(.x$time)),
+    intercept = map_dbl(model, ~ unname(coef(.x)[1])),
+    slope = map_dbl(model, ~ unname(coef(.x)[2])),
+    slope_se = map_dbl(
+      model,
+      function(m) {
+        if (df.residual(m) <= 0) return(NA_real_)
+        unname(sqrt(diag(vcov(m)))["time"])
+      }
+    )
+  )
+
+head(stage1_results)
+
+```
+
+
+```{r}
+stage1_lines <- stage1_models |>
+  transmute(
+    id,
+    fitted_data = map2(
+      data, model,
+      function(d, m) {
+        new_data <- tibble(
+          time = seq(0, max(d$time), length.out = 50)
+        )
+        new_data |>
+          mutate(cd4_fitted = as.numeric(predict(m, new_data)))
+      }
+    )
+  ) |>
+  unnest(fitted_data)
+```
+
+
+```{r}
+fig7_cd4_linear_by_subject <- 
+  ggplot() +
+  geom_line(
+    data = df_macs_analysis,
+    aes(time, cd4, group = id),
+    color = "grey60", alpha = 0.15
+  ) +
+  geom_line(
+    data = stage1_lines,
+    aes(time, cd4_fitted, group = id),
+    color = "#0072B2", alpha = 0.25
+  ) +
+  labs(
+    title = "Individual linear fits for CD4+ count",
+    x = "Time since seroconversion (years; baseline treated as 0)",
+    y = "CD4+ count"
+  ) +
+  theme_minimal()
+
+ggsave("plots/2026-10-06_fig07_cd4_linear-by-subject.png", 
+       fig7_cd4_linear_by_subject, height = 6, width = 9, dpi = 900)
+
+fig7_cd4_linear_by_subject
+```
+
+
+### stage two
+
+```{r}
+stage1_results |>
+  summarise(
+    n_subjects = n(),
+    mean_slope = mean(slope),
+    median_slope = median(slope),
+    q1_slope = quantile(slope, 0.25),
+    q3_slope = quantile(slope, 0.75),
+    percent_negative = 100 * mean(slope < 0),
+    n_two_measurements = sum(n_measurements == 2)
+  )
+```
+
+
+```{r}
+stage2_data <- stage1_results |>
+  left_join(
+    df_macs_baseline |>
+      select(id, age, packs, drug, partners, cesd),
+    by = "id"
+  ) |>
+  mutate(
+    packs = factor(packs),
+    drug = factor(drug)
+  )
+
+stage2_intercept <- lm(
+  intercept ~ age + packs + drug + partners + cesd,
+  data = stage2_data
+)
+
+stage2_slope <- lm(
+  slope ~ age + packs + drug + partners + cesd,
+  data = stage2_data
+)
+
+summary(stage2_intercept)
+summary(stage2_slope)
+```
+
+
+```{r}
+stage1_results |>
+  arrange(slope) |>
+  select(id, n_measurements, followup_years, slope, slope_se) |>
+  slice_head(n = 10)
+```
+
+
+```{r}
+stage2_data |>
+  mutate(cooks_distance = cooks.distance(stage2_slope)) |>
+  arrange(desc(cooks_distance)) |>
+  select(id, n_measurements, followup_years,
+         slope, cooks_distance) |>
+  slice_head(n = 10)
+```
+
+
+```{r}
+stage2_data_3plus <- stage2_data |>
+  filter(n_measurements >= 3)
+
+stage2_intercept_3plus <- lm(
+  intercept ~ age + packs + drug + partners + cesd,
+  data = stage2_data_3plus
+)
+
+stage2_slope_3plus <- lm(
+  slope ~ age + packs + drug + partners + cesd,
+  data = stage2_data_3plus
+)
+
+summary(stage2_intercept_3plus)
+summary(stage2_slope_3plus)
+```
 
 
 
+```{r}
+stage2_table <- bind_rows(
+  tidy(stage2_intercept, conf.int = TRUE) |>
+    mutate(Model = "Starting CD4 level"),
+  tidy(stage2_slope, conf.int = TRUE) |>
+    mutate(Model = "Annual CD4 change")
+) |>
+  select(
+    Model,
+    Predictor = term,
+    Estimate = estimate,
+    `Lower 95% CI` = conf.low,
+    `Upper 95% CI` = conf.high,
+    `p-value` = p.value
+  )
+
+kable(
+  stage2_table,
+  digits = 3,
+  caption = "Stage-two regression results"
+)
+```
 
 
+```{r}
+check_ids <- stage2_data |>
+  mutate(cooks_distance = cooks.distance(stage2_slope)) |>
+  arrange(desc(cooks_distance)) |>
+  slice_head(n = 5) |>
+  pull(id)
+
+df_macs_analysis |>
+  filter(id %in% check_ids) |>
+  arrange(id, time_original) |>
+  select(id, time_original, time, cd4)
+```
 
 
+```{r}
+comparison_table <- bind_rows(
+  tidy(stage2_intercept, conf.int = TRUE) |>
+    mutate(Analysis = "All participants",
+           Outcome = "Starting CD4 level"),
 
+  tidy(stage2_intercept_3plus, conf.int = TRUE) |>
+    mutate(Analysis = "At least 3 measurements",
+           Outcome = "Starting CD4 level"),
 
+  tidy(stage2_slope, conf.int = TRUE) |>
+    mutate(Analysis = "All participants",
+           Outcome = "Annual CD4 change"),
 
+  tidy(stage2_slope_3plus, conf.int = TRUE) |>
+    mutate(Analysis = "At least 3 measurements",
+           Outcome = "Annual CD4 change")
+) |>
+  filter(term != "(Intercept)") |>
+  mutate(
+    `Estimate (95% CI)` = sprintf(
+      "%.2f (%.2f, %.2f)", estimate, conf.low, conf.high
+    ),
+    `p-value` = trimws(
+      format.pval(p.value, digits = 3, eps = 0.001)
+    )
+  ) |>
+  select(
+    Outcome, Predictor = term, Analysis,
+    `Estimate (95% CI)`, `p-value`
+  ) |>
+  arrange(Outcome, Predictor, Analysis)
 
+kable(
+  comparison_table,
+  caption = "Main and sensitivity analyses"
+)
+```
 
+I fitted a separate linear regression of CD4 count on time for each of the 266 participants, then modeled the estimated starting CD4 levels and annual changes using baseline covariates.  
 
+Most participants showed declining CD4 counts: 92.5% had negative slopes. The median slope was −141.7 per year, with an interquartile range of −283.7 to −67.5. The mean was more negative (−293.4), reflecting several extreme slopes.  
 
+After adjustment for the other covariates, packs codes 3 and 4 were associated with higher estimated starting CD4 levels than code 0. Drug code 1 was also associated with a higher starting level. None of the baseline covariates showed a clear association with annual CD4 change in the main analysis.  
 
+The most influential participants in the slope model had only two measurements. I repeated the analysis among the 231 participants with at least three measurements. The starting-level associations for packs codes 3 and 4 remained, while the evidence for drug code 1 weakened. In this sensitivity analysis, packs code 3 was associated with faster decline, and higher CESD scores were associated with more positive slopes.  
 
-
-
-
+These differences suggest that conclusions about CD4 change depend on participants with limited measurements. Also, assigning the pre-seroconversion measurement to time zero shortened the modeled measurement interval and may have exaggerated some short-term slopes.  
 
 
 
