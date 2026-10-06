@@ -21,10 +21,11 @@ library(knitr)
 library(splines)
 
 load("data/Six Cities.RData")
+load("data/MACS.RData")
 ```
 
 
-# Question b
+# Question 2
 
 ## EDA for topeka
 
@@ -415,6 +416,128 @@ Subject 197 has a clearly low value and only one measurement, so I cannot compar
 We could also examine if taller girls have higher lung function. However, this would describe a between-subject association, rather than whether a girl’s lung function increases as she grows taller.   
 
 **Individual differences:** We could study differences in lung function levels between girls of similar age and height. However, one measurement per girl would not allow us to distinguish persistent individual differences from temporary variation or measurement error. We weren't able to directly estimate individual growth rates, within-girl correlation, or how that correlation changed by time.  
+
+
+# Question 3
+
+## table one
+
+
+```{r}
+df_eligible_ids <- macs |>
+  group_by(id) |>
+  summarise(
+    has_pre = any(time >= -0.5 & time < 0),
+    has_post = any(time > 0),
+    .groups = "drop"
+  ) |>
+  filter(has_pre & has_post)
+
+nrow(df_eligible_ids)  
+```
+
+
+```{r}
+df_macs_baseline <- macs |>
+  semi_join(df_eligible_ids, by = "id") |>
+  filter(time >= -0.5 & time < 0) |>
+  arrange(id)
+
+nrow(df_macs_baseline)             # 266
+n_distinct(df_macs_baseline$id)    # 266
+```
+
+
+```{r}
+continuous_row <- function(label, x) {
+  missing_n <- sum(is.na(x))
+  x <- x[!is.na(x)]
+
+  tibble(
+    Characteristic = label,
+    `Mean (SD) or n (%)` =
+      sprintf("%.2f (%.2f)", mean(x), sd(x)),
+    `Median [Q1, Q3]` =
+      sprintf(
+        "%.2f [%.2f, %.2f]",
+        median(x),
+        quantile(x, 0.25),
+        quantile(x, 0.75)
+      ),
+    Missing = as.character(missing_n)
+  )
+}
+```
+
+
+```{r}
+categorical_rows <- function(label, x) {
+  missing_n <- sum(is.na(x))
+  observed <- x[!is.na(x)]
+  counts <- table(observed)
+
+  bind_rows(
+    tibble(
+      Characteristic = label,
+      `Mean (SD) or n (%)` = "",
+      `Median [Q1, Q3]` = "",
+      Missing = as.character(missing_n)
+    ),
+    tibble(
+      Characteristic = paste0("  Code ", names(counts)),
+      `Mean (SD) or n (%)` = sprintf(
+        "%d (%.1f%%)",
+        as.integer(counts),
+        100 * as.integer(counts) / length(observed)
+      ),
+      `Median [Q1, Q3]` = "",
+      Missing = ""
+    )
+  )
+}
+```
+
+
+```{r}
+table_one <- bind_rows(
+  continuous_row("age (original scale)", df_macs_baseline$age),
+  categorical_rows("packs (original codes)", df_macs_baseline$packs),
+  categorical_rows("drug (original codes)", df_macs_baseline$drug),
+  continuous_row("partners (original scale)", df_macs_baseline$partners),
+  continuous_row("CESD score", df_macs_baseline$cesd),
+  continuous_row("Baseline CD4+ count", df_macs_baseline$cd4)
+)
+
+
+kable(
+  table_one,
+  caption = "Table 1. Baseline characteristics of the MACS sample (N = 266)",
+  align = c("l", "r", "r", "r"),
+  row.names = FALSE
+)
+```
+
+
+Baseline was defined as the pre-seroconversion measurement within six months of seroconversion. Percentages use non-missing observations as the denominator. Variables with unconfirmed definitions are presented on their original scales or using their original codes.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

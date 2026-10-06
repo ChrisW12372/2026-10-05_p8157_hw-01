@@ -1512,9 +1512,10 @@ library(plotly)
 library(knitr)
 library(splines)
 
-load(&quot;data/Six Cities.RData&quot;)</code></pre>
-<div id="question-b" class="section level1" number="1">
-<h1><span class="header-section-number">1</span> Question b</h1>
+load(&quot;data/Six Cities.RData&quot;)
+load(&quot;data/MACS.RData&quot;)</code></pre>
+<div id="question-2" class="section level1" number="1">
+<h1><span class="header-section-number">1</span> Question 2</h1>
 <div id="eda-for-topeka" class="section level2" number="1.1">
 <h2><span class="header-section-number">1.1</span> EDA for topeka</h2>
 <div id="overall-checking" class="section level3" number="1.1.1">
@@ -2000,6 +2001,192 @@ persistent individual differences from temporary variation or
 measurement error. We weren’t able to directly estimate individual
 growth rates, within-girl correlation, or how that correlation changed
 by time.</p>
+</div>
+</div>
+<div id="question-3" class="section level1" number="2">
+<h1><span class="header-section-number">2</span> Question 3</h1>
+<div id="table-one" class="section level2" number="2.1">
+<h2><span class="header-section-number">2.1</span> table one</h2>
+<pre class="r"><code>df_eligible_ids &lt;- macs |&gt;
+  group_by(id) |&gt;
+  summarise(
+    has_pre = any(time &gt;= -0.5 &amp; time &lt; 0),
+    has_post = any(time &gt; 0),
+    .groups = &quot;drop&quot;
+  ) |&gt;
+  filter(has_pre &amp; has_post)
+
+nrow(df_eligible_ids)  </code></pre>
+<pre><code>## [1] 266</code></pre>
+<pre class="r"><code>df_macs_baseline &lt;- macs |&gt;
+  semi_join(df_eligible_ids, by = &quot;id&quot;) |&gt;
+  filter(time &gt;= -0.5 &amp; time &lt; 0) |&gt;
+  arrange(id)
+
+nrow(df_macs_baseline)             # 266</code></pre>
+<pre><code>## [1] 266</code></pre>
+<pre class="r"><code>n_distinct(df_macs_baseline$id)    # 266</code></pre>
+<pre><code>## [1] 266</code></pre>
+<pre class="r"><code>continuous_row &lt;- function(label, x) {
+  missing_n &lt;- sum(is.na(x))
+  x &lt;- x[!is.na(x)]
+
+  tibble(
+    Characteristic = label,
+    `Mean (SD) or n (%)` =
+      sprintf(&quot;%.2f (%.2f)&quot;, mean(x), sd(x)),
+    `Median [Q1, Q3]` =
+      sprintf(
+        &quot;%.2f [%.2f, %.2f]&quot;,
+        median(x),
+        quantile(x, 0.25),
+        quantile(x, 0.75)
+      ),
+    Missing = as.character(missing_n)
+  )
+}</code></pre>
+<pre class="r"><code>categorical_rows &lt;- function(label, x) {
+  missing_n &lt;- sum(is.na(x))
+  observed &lt;- x[!is.na(x)]
+  counts &lt;- table(observed)
+
+  bind_rows(
+    tibble(
+      Characteristic = label,
+      `Mean (SD) or n (%)` = &quot;&quot;,
+      `Median [Q1, Q3]` = &quot;&quot;,
+      Missing = as.character(missing_n)
+    ),
+    tibble(
+      Characteristic = paste0(&quot;  Code &quot;, names(counts)),
+      `Mean (SD) or n (%)` = sprintf(
+        &quot;%d (%.1f%%)&quot;,
+        as.integer(counts),
+        100 * as.integer(counts) / length(observed)
+      ),
+      `Median [Q1, Q3]` = &quot;&quot;,
+      Missing = &quot;&quot;
+    )
+  )
+}</code></pre>
+<pre class="r"><code>table_one &lt;- bind_rows(
+  continuous_row(&quot;age (original scale)&quot;, df_macs_baseline$age),
+  categorical_rows(&quot;packs (original codes)&quot;, df_macs_baseline$packs),
+  categorical_rows(&quot;drug (original codes)&quot;, df_macs_baseline$drug),
+  continuous_row(&quot;partners (original scale)&quot;, df_macs_baseline$partners),
+  continuous_row(&quot;CESD score&quot;, df_macs_baseline$cesd),
+  continuous_row(&quot;Baseline CD4+ count&quot;, df_macs_baseline$cd4)
+)
+
+
+kable(
+  table_one,
+  caption = &quot;Table 1. Baseline characteristics of the MACS sample (N = 266)&quot;,
+  align = c(&quot;l&quot;, &quot;r&quot;, &quot;r&quot;, &quot;r&quot;),
+  row.names = FALSE
+)</code></pre>
+<table style="width:100%;">
+<caption>Table 1. Baseline characteristics of the MACS sample (N =
+266)</caption>
+<colgroup>
+<col width="33%" />
+<col width="24%" />
+<col width="32%" />
+<col width="10%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th align="left">Characteristic</th>
+<th align="right">Mean (SD) or n (%)</th>
+<th align="right">Median [Q1, Q3]</th>
+<th align="right">Missing</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td align="left">age (original scale)</td>
+<td align="right">2.34 (7.44)</td>
+<td align="right">1.27 [-2.94, 6.33]</td>
+<td align="right">0</td>
+</tr>
+<tr class="even">
+<td align="left">packs (original codes)</td>
+<td align="right"></td>
+<td align="right"></td>
+<td align="right">0</td>
+</tr>
+<tr class="odd">
+<td align="left">Code 0</td>
+<td align="right">159 (59.8%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="even">
+<td align="left">Code 1</td>
+<td align="right">11 (4.1%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="odd">
+<td align="left">Code 2</td>
+<td align="right">16 (6.0%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="even">
+<td align="left">Code 3</td>
+<td align="right">55 (20.7%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="odd">
+<td align="left">Code 4</td>
+<td align="right">25 (9.4%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="even">
+<td align="left">drug (original codes)</td>
+<td align="right"></td>
+<td align="right"></td>
+<td align="right">0</td>
+</tr>
+<tr class="odd">
+<td align="left">Code 0</td>
+<td align="right">48 (18.0%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="even">
+<td align="left">Code 1</td>
+<td align="right">218 (82.0%)</td>
+<td align="right"></td>
+<td align="right"></td>
+</tr>
+<tr class="odd">
+<td align="left">partners (original scale)</td>
+<td align="right">6.72 (3.48)</td>
+<td align="right">8.00 [3.00, 10.00]</td>
+<td align="right">0</td>
+</tr>
+<tr class="even">
+<td align="left">CESD score</td>
+<td align="right">10.02 (10.04)</td>
+<td align="right">7.00 [2.25, 14.00]</td>
+<td align="right">0</td>
+</tr>
+<tr class="odd">
+<td align="left">Baseline CD4+ count</td>
+<td align="right">998.88 (422.43)</td>
+<td align="right">932.50 [696.25, 1220.75]</td>
+<td align="right">0</td>
+</tr>
+</tbody>
+</table>
+<p>Baseline was defined as the pre-seroconversion measurement within six
+months of seroconversion. Percentages use non-missing observations as
+the denominator. Variables with unconfirmed definitions are presented on
+their original scales or using their original codes.</p>
 </div>
 </div>
 
