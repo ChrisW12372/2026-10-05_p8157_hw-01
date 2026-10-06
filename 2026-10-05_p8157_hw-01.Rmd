@@ -408,7 +408,13 @@ Subject 197 has a clearly low value and only one measurement, so I cannot compar
 **Individual differences:** Do girls differ in their lung function levels and rates of growth? How strongly are repeated measurements from the same girl correlated, and does this correlation decrease as the time gap increases?   
 
 
+## single time measurement
 
+**Overall trends:** With one measurement per girl, we could examine how average lung function differs across ages. However, differences between younger and older girls can't describe how the same person changes by time. The interpretation required girls of different ages to be comparable in other factors affecting lung function (exchangeable). Also, baseline ages range from about 6.43 to 14 years, so these data would not directly show whether growth slows after 15.  
+
+We could also examine if taller girls have higher lung function. However, this would describe a between-subject association, rather than whether a girl’s lung function increases as she grows taller.   
+
+**Individual differences:** We could study differences in lung function levels between girls of similar age and height. However, one measurement per girl would not allow us to distinguish persistent individual differences from temporary variation or measurement error. We weren't able to directly estimate individual growth rates, within-girl correlation, or how that correlation changed by time.  
 
 
 
