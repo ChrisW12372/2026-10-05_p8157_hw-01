@@ -401,7 +401,11 @@ The residual spread is similar across age groups, with no clear trend in variabi
 Subject 197 has a clearly low value and only one measurement, so I cannot compare it with her other visits.  
 
 
+## questions proposed
 
+**Overall trends:** How does lung function change with age on average? Does growth slow down during the teenage years? Within girls, is an increase in height associated with an increase in lung function?   
+
+**Individual differences:** Do girls differ in their lung function levels and rates of growth? How strongly are repeated measurements from the same girl correlated, and does this correlation decrease as the time gap increases?   
 
 
 
